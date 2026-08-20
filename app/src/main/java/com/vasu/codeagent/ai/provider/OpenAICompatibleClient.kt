@@ -1,62 +1,94 @@
 package com.vasu.codeagent.ai.provider
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.kotlinx.serialization.asConverterFactory
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class OpenAICompatibleClient(
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+/**
+ * Talks to whichever OpenAI-compatible endpoint the user configured.
+ * Never logs the API key or the raw Authorization header.
+ */
+class OpenAICompatibleClient {
+
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+
+    private val logging = HttpLoggingInterceptor { message ->
+        // Redact anything that looks like a bearer token before it ever hits Logcat.
+        val redacted = message.replace(Regex("Bearer [A-Za-z0-9._-]+"), "Bearer [REDACTED]")
+        android.util.Log.d("VasuAI", redacted)
+    }.apply { level = HttpLoggingInterceptor.Level.BASIC }
+
+    private val okHttp = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(120, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build(),
-    private val json: Json = Json { ignoreUnknownKeys = true }
-) {
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .addInterceptor(logging)
+        .build()
+
+    private val retrofit = Retrofit.Builder()
+        .baseUrl("https://placeholder.invalid/") // unused: every call passes a full @Url
+        .client(okHttp)
+        .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+        .build()
+
+    private val api = retrofit.create(OpenAICompatibleApi::class.java)
+
     suspend fun sendChat(
         config: AIProviderConfig,
         systemPrompt: String,
         history: List<ChatMessageDto>,
         isNetworkAvailable: Boolean,
-    ): AIClientResult = withContext(Dispatchers.IO) {
-        if (!isNetworkAvailable) return@withContext AIClientResult.Error("Network is unavailable")
-        if (config.baseUrl.isBlank() || config.model.isBlank()) {
-            return@withContext AIClientResult.Error("AI provider is not configured")
+    ): AIClientResult {
+        if (!config.isUsable()) {
+            return AIClientResult.Offline("No AI provider configured. Add one in Settings.")
+        }
+        if (!isNetworkAvailable) {
+            return AIClientResult.Offline("Offline — AI provider unavailable")
         }
 
-        val messages = buildList {
-            add(ChatMessageDto(role = "system", content = systemPrompt))
-            addAll(history)
+        val url = buildChatCompletionsUrl(config.baseUrl)
+        val headers = buildMap {
+            put("Content-Type", "application/json")
+            if (config.apiKey.isNotBlank()) put("Authorization", "Bearer ${config.apiKey}")
         }
-        val payload = ChatCompletionRequest(
+        val request = ChatCompletionRequest(
             model = config.model,
-            messages = messages,
+            messages = listOf(ChatMessageDto("system", systemPrompt)) + history,
             temperature = config.temperature,
+            maxTokens = config.maxTokens,
         )
-        val body = json.encodeToString(ChatCompletionRequest.serializer(), payload)
-            .toRequestBody("application/json".toMediaType())
-        val endpoint = config.baseUrl.trimEnd('/') + "/chat/completions"
-        val requestBuilder = Request.Builder().url(endpoint).post(body)
-        if (config.apiKey.isNotBlank()) {
-            requestBuilder.header("Authorization", "Bearer ${config.apiKey}")
-        }
 
-        runCatching {
-            httpClient.newCall(requestBuilder.build()).execute().use { response ->
-                val responseText = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    AIClientResult.Error("HTTP ${response.code}: ${responseText.take(500)}")
+        return try {
+            val response = api.chatCompletions(url, headers, request)
+            if (response.isSuccessful) {
+                val body = response.body()
+                val text = body?.choices?.firstOrNull()?.message?.content
+                if (text.isNullOrBlank()) {
+                    AIClientResult.ApiError(response.code(), "Provider returned an empty response.")
                 } else {
-                    val parsed = json.decodeFromString(ChatCompletionResponse.serializer(), responseText)
-                    val text = parsed.choices.firstOrNull()?.message?.content.orEmpty()
-                    if (text.isBlank()) AIClientResult.Error("Provider returned an empty response")
-                    else AIClientResult.Success(text)
+                    AIClientResult.Success(text, body?.usage)
                 }
+            } else {
+                val errText = response.errorBody()?.string()
+                val parsedMessage = errText?.let { raw ->
+                    runCatching { json.decodeFromString<ApiErrorBody>(raw).error?.message }.getOrNull()
+                }
+                AIClientResult.ApiError(response.code(), parsedMessage ?: "Request failed (HTTP ${response.code()}).")
             }
-        }.getOrElse { AIClientResult.Error(it.message ?: it.javaClass.simpleName) }
+        } catch (e: IOException) {
+            AIClientResult.NetworkError(e.message ?: "Network request failed.")
+        } catch (e: Exception) {
+            AIClientResult.NetworkError(e.message ?: "Unexpected client error.")
+        }
+    }
+
+    private fun buildChatCompletionsUrl(baseUrl: String): String {
+        val trimmed = baseUrl.trimEnd('/')
+        return if (trimmed.endsWith("/chat/completions")) trimmed else "$trimmed/chat/completions"
     }
 }

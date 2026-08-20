@@ -1,10 +1,17 @@
 package com.vasu.codeagent.ai.provider
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+
+/**
+ * Wire models for the OpenAI-compatible /chat/completions endpoint.
+ * Shared by every provider (OpenRouter, custom endpoints, local Ollama-OpenAI-shim, etc.)
+ * since they all speak this schema.
+ */
 
 @Serializable
 data class ChatMessageDto(
-    val role: String,
+    val role: String, // "system" | "user" | "assistant"
     val content: String,
 )
 
@@ -12,42 +19,41 @@ data class ChatMessageDto(
 data class ChatCompletionRequest(
     val model: String,
     val messages: List<ChatMessageDto>,
-    val temperature: Double,
+    val temperature: Double = 0.2,
+    @SerialName("max_tokens") val maxTokens: Int? = null,
+    val stream: Boolean = false,
 )
 
 @Serializable
 data class ChatChoice(
+    val index: Int = 0,
     val message: ChatMessageDto,
+    @SerialName("finish_reason") val finishReason: String? = null,
+)
+
+@Serializable
+data class ChatUsage(
+    @SerialName("prompt_tokens") val promptTokens: Int = 0,
+    @SerialName("completion_tokens") val completionTokens: Int = 0,
+    @SerialName("total_tokens") val totalTokens: Int = 0,
 )
 
 @Serializable
 data class ChatCompletionResponse(
+    val id: String? = null,
+    val model: String? = null,
     val choices: List<ChatChoice> = emptyList(),
+    val usage: ChatUsage? = null,
 )
 
 @Serializable
-data class AIProviderConfig(
-    val label: String = "",
-    val baseUrl: String = "",
-    val apiKey: String = "",
-    val model: String = "",
-    val temperature: Double = 0.2,
-) {
-    fun isUsable(): Boolean = baseUrl.isNotBlank() && model.isNotBlank()
+data class ApiErrorBody(
+    val error: ApiErrorDetail? = null,
+)
 
-    companion object {
-        fun openRouterFreeCoderPreset() = AIProviderConfig(
-            label = "OpenRouter Free Coder",
-            baseUrl = "https://openrouter.ai/api/v1",
-            model = "qwen/qwen3-coder:free",
-            temperature = 0.2,
-        )
-
-        fun localOllamaPreset() = AIProviderConfig(
-            label = "Local Ollama",
-            baseUrl = "http://10.0.2.2:11434/v1",
-            model = "qwen3-coder:30b",
-            temperature = 0.2,
-        )
-    }
-}
+@Serializable
+data class ApiErrorDetail(
+    val message: String? = null,
+    val type: String? = null,
+    val code: String? = null,
+)

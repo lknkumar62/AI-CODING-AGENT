@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HTTPS-only by default (GitHub API, cloud AI providers).
+  A narrow cleartext exception is scoped only to local-machine hosts so a
+  locally running Ollama server (which serves plain HTTP) still works.
+  If your Ollama runs on your LAN under a different IP, add that exact
+  host here — do not widen the base-config.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
