@@ -3,16 +3,25 @@ package com.vasu.codeagent.ai.provider
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/**
- * Wire models for the OpenAI-compatible /chat/completions endpoint.
- * Shared by every provider (OpenRouter, custom endpoints, local Ollama-OpenAI-shim, etc.)
- * since they all speak this schema.
- */
-
 @Serializable
 data class ChatMessageDto(
-    val role: String, // "system" | "user" | "assistant"
-    val content: String,
+    val role: String,
+    val content: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<ChatToolCall>? = null,
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+)
+
+@Serializable
+data class ChatToolCall(
+    val id: String,
+    val type: String = "function",
+    val function: ChatFunctionCall,
+)
+
+@Serializable
+data class ChatFunctionCall(
+    val name: String,
+    val arguments: String,
 )
 
 @Serializable
@@ -22,6 +31,21 @@ data class ChatCompletionRequest(
     val temperature: Double = 0.2,
     @SerialName("max_tokens") val maxTokens: Int? = null,
     val stream: Boolean = false,
+    val tools: List<ChatToolDefinition>? = null,
+    @SerialName("tool_choice") val toolChoice: String? = null,
+)
+
+@Serializable
+data class ChatToolDefinition(
+    val type: String = "function",
+    val function: ChatFunctionDefinition,
+)
+
+@Serializable
+data class ChatFunctionDefinition(
+    val name: String,
+    val description: String,
+    @SerialName("parameters") val parameters: kotlinx.serialization.json.JsonObject,
 )
 
 @Serializable
