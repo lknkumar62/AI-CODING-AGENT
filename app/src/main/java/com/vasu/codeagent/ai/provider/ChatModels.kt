@@ -33,6 +33,7 @@ data class ChatCompletionRequest(
     val stream: Boolean = false,
     val tools: List<ChatToolDefinition>? = null,
     @SerialName("tool_choice") val toolChoice: String? = null,
+    @SerialName("parallel_tool_calls") val parallelToolCalls: Boolean? = null,
 )
 
 @Serializable
@@ -45,7 +46,7 @@ data class ChatToolDefinition(
 data class ChatFunctionDefinition(
     val name: String,
     val description: String,
-    @SerialName("parameters") val parameters: kotlinx.serialization.json.JsonObject,
+    val parameters: kotlinx.serialization.json.JsonObject,
 )
 
 @Serializable
