@@ -9,16 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/**
- * Persists provider settings (including the API key) using an
- * Android-Keystore-backed EncryptedSharedPreferences file. The API key
- * never touches plain-text storage, logs, or the on-screen chat/prompt.
- *
- * GitHub tokens follow the same pattern once GitHub auth (Phase 4) lands —
- * a separate encrypted entry, never embedded in AI prompts.
- */
 class SecureSettingsStore(context: Context) {
-
     private val json = Json { ignoreUnknownKeys = true }
 
     private val masterKey = MasterKey.Builder(context)
@@ -39,6 +30,12 @@ class SecureSettingsStore(context: Context) {
     private val _autoApproveSafeOps = MutableStateFlow(prefs.getBoolean(KEY_AUTO_APPROVE, false))
     val autoApproveSafeOps: StateFlow<Boolean> = _autoApproveSafeOps
 
+    private val _githubToken = MutableStateFlow(prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty())
+    val githubToken: StateFlow<String> = _githubToken
+
+    private val _lastRepo = MutableStateFlow(prefs.getString(KEY_LAST_REPO, "").orEmpty())
+    val lastRepo: StateFlow<String> = _lastRepo
+
     fun saveProviderConfig(config: AIProviderConfig) {
         prefs.edit().putString(KEY_PROVIDER_CONFIG, json.encodeToString(config)).apply()
         _providerConfig.value = config
@@ -49,10 +46,22 @@ class SecureSettingsStore(context: Context) {
         _autoApproveSafeOps.value = enabled
     }
 
+    fun saveGithubToken(token: String) {
+        prefs.edit().putString(KEY_GITHUB_TOKEN, token).apply()
+        _githubToken.value = token
+    }
+
+    fun saveLastRepo(repo: String) {
+        prefs.edit().putString(KEY_LAST_REPO, repo).apply()
+        _lastRepo.value = repo
+    }
+
     fun clearAll() {
         prefs.edit().clear().apply()
         _providerConfig.value = AIProviderConfig()
         _autoApproveSafeOps.value = false
+        _githubToken.value = ""
+        _lastRepo.value = ""
     }
 
     private fun loadProviderConfig(): AIProviderConfig {
@@ -64,5 +73,7 @@ class SecureSettingsStore(context: Context) {
     companion object {
         private const val KEY_PROVIDER_CONFIG = "provider_config"
         private const val KEY_AUTO_APPROVE = "auto_approve_safe_ops"
+        private const val KEY_GITHUB_TOKEN = "github_token"
+        private const val KEY_LAST_REPO = "last_repo"
     }
 }
