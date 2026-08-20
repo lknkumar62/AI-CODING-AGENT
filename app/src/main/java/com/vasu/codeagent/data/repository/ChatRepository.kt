@@ -7,6 +7,7 @@ import com.vasu.codeagent.ai.provider.ChatMessageDto
 import com.vasu.codeagent.ai.provider.ChatToolDefinition
 import com.vasu.codeagent.ai.provider.OpenAICompatibleClient
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -31,7 +32,7 @@ WORKFLOW:
 6. If a tool returns an error, diagnose the returned error and retry with corrected arguments.
 7. Keep iterating until the requested implementation is complete or a real external limitation prevents it.
 8. Never invent a build/test result. This agent can edit GitHub files but can only know a GitHub Actions
-   result when such a result is actually supplied by an available tool.
+   result when such a result is actually supplied to it.
 9. Do not expose, request, or repeat secrets, tokens, or API keys.
 10. For write/delete operations, the app may require user approval. Wait for the app's approval rather
     than pretending the operation happened.
@@ -105,14 +106,14 @@ When no tool is needed, answer in concise Markdown.
         private fun tool(name: String, description: String, parameters: JsonObject) =
             ChatToolDefinition(function = ChatFunctionDefinition(name, description, parameters))
 
-        private fun emptyParams() = buildJsonObject {
+        private fun emptyParams(): JsonObject = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {}
             put("required", buildJsonArray {})
-            put("additionalProperties", false)
+            put("additionalProperties", JsonPrimitive(false))
         }
 
-        private fun objectParams(required: List<String>, properties: Map<String, String>) = buildJsonObject {
+        private fun objectParams(required: List<String>, properties: Map<String, String>): JsonObject = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
                 properties.forEach { (key, description) ->
@@ -122,17 +123,20 @@ When no tool is needed, answer in concise Markdown.
                     }
                 }
             }
-            put("required", buildJsonArray { required.forEach { add(it) } })
-            put("additionalProperties", false)
+            put("required", buildJsonArray { required.forEach { add(JsonPrimitive(it)) } })
+            put("additionalProperties", JsonPrimitive(false))
         }
     }
 
-    suspend fun send(config: AIProviderConfig, history: List<ChatMessageDto>, isOnline: Boolean): AIClientResult =
-        client.sendChat(
-            config = config,
-            systemPrompt = SYSTEM_PROMPT,
-            history = history,
-            isNetworkAvailable = isOnline,
-            tools = TOOLS,
-        )
+    suspend fun send(
+        config: AIProviderConfig,
+        history: List<ChatMessageDto>,
+        isOnline: Boolean,
+    ): AIClientResult = client.sendChat(
+        config = config,
+        systemPrompt = SYSTEM_PROMPT,
+        history = history,
+        isNetworkAvailable = isOnline,
+        tools = TOOLS,
+    )
 }
