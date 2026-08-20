@@ -6,25 +6,20 @@ import com.vasu.codeagent.VasuApp
 import com.vasu.codeagent.agent.AgentToolExecutor
 import com.vasu.codeagent.ai.provider.AIClientResult
 import com.vasu.codeagent.ai.provider.ChatMessageDto
+import com.vasu.codeagent.ai.provider.ChatToolCall
 import com.vasu.codeagent.data.repository.StoredChatMessage
 import com.vasu.codeagent.data.repository.isOnline
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
-class ChatViewModel(
-    private val app: VasuApp,
-) : ViewModel() {
+class ChatViewModel(private val app: VasuApp) : ViewModel() {
     data class UiMessage(val role: String, val content: String)
-
-    @Serializable
-    private data class ToolCall(val name: String, val arguments: JsonObject = JsonObject(emptyMap()))
-
-    data class PendingApproval(val toolName: String, val arguments: JsonObject)
+    data class PendingApproval(val toolName: String, val arguments: JsonObject, val callId: String)
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val toolExecutor = AgentToolExecutor(app.gitHubRepository, app.settingsStore)
@@ -59,8 +54,9 @@ class ChatViewModel(
             try {
                 val result = toolExecutor.execute(pending.toolName, pending.arguments)
                 val history = pendingHistory + ChatMessageDto(
-                    "user",
-                    "<tool_result name=\"${pending.toolName}\" ok=\"${result.ok}\">${result.text}</tool_result>",
+                    role = "tool",
+                    content = result.text,
+                    toolCallId = pending.callId,
                 )
                 runAgent(history)
             } catch (e: Exception) {
@@ -97,26 +93,44 @@ class ChatViewModel(
 
                 when (result) {
                     is AIClientResult.Success -> {
-                        val reply = result.text.trim()
-                        val call = parseToolCall(reply)
-                        if (call == null) {
-                            updateMessages(_messages.value + UiMessage("assistant", reply))
+                        val calls = result.toolCalls
+                        if (calls.isEmpty()) {
+                            val reply = result.text.trim()
+                            if (reply.isNotEmpty()) updateMessages(_messages.value + UiMessage("assistant", reply))
                             _isSending.value = false
                             return
                         }
 
-                        history = history + ChatMessageDto("assistant", reply)
-                        if (!toolExecutor.isSafe(call.name) && !app.settingsStore.autoApproveSafeOps.value) {
-                            pendingHistory = history
-                            _pendingApproval.value = PendingApproval(call.name, call.arguments)
+                        // The prompt asks the model to issue one operation at a time. This keeps
+                        // approval and tool-result ordering valid for OpenAI-compatible APIs.
+                        val call = calls.first()
+                        val arguments = runCatching {
+                            json.parseToJsonElement(call.function.arguments).jsonObject
+                        }.getOrElse {
+                            updateMessages(_messages.value + UiMessage("assistant", "Invalid tool arguments from model: ${it.message}"))
+                            _isSending.value = false
                             return
                         }
 
-                        val toolResult = toolExecutor.execute(call.name, call.arguments)
                         history = history + ChatMessageDto(
-                            "user",
-                            "<tool_result name=\"${call.name}\" ok=\"${toolResult.ok}\">${toolResult.text}</tool_result>",
+                            role = "assistant",
+                            content = result.text.ifBlank { null },
+                            toolCalls = listOf(call),
                         )
+                        pendingHistory = history
+
+                        if (!toolExecutor.isSafe(call.function.name) && !app.settingsStore.autoApproveSafeOps.value) {
+                            _pendingApproval.value = PendingApproval(call.function.name, arguments, call.id)
+                            return
+                        }
+
+                        val toolResult = toolExecutor.execute(call.function.name, arguments)
+                        history = history + ChatMessageDto(
+                            role = "tool",
+                            content = toolResult.text,
+                            toolCallId = call.id,
+                        )
+                        pendingHistory = history
                     }
                     is AIClientResult.ApiError -> {
                         updateMessages(_messages.value + UiMessage("assistant", "API error ${result.httpCode}: ${result.message}"))
@@ -136,23 +150,12 @@ class ChatViewModel(
                 }
             }
 
-            updateMessages(_messages.value + UiMessage("assistant", "I reached the agent step limit before finishing. Tell me to continue."))
+            updateMessages(_messages.value + UiMessage("assistant", "Agent reached the ${MAX_AGENT_STEPS}-step safety limit. Send \"continue\" to resume."))
         } catch (e: Exception) {
             updateMessages(_messages.value + UiMessage("assistant", "Agent error: ${e.message ?: "Unknown error"}"))
         } finally {
-            if (_pendingApproval.value == null) {
-                _isSending.value = false
-            }
+            if (_pendingApproval.value == null) _isSending.value = false
         }
-    }
-
-    private fun parseToolCall(text: String): ToolCall? {
-        val start = text.indexOf("<tool_call>")
-        if (start < 0) return null
-        val end = text.indexOf("</tool_call>", start + 11)
-        if (end < 0) return null
-        val payload = text.substring(start + 11, end).trim()
-        return runCatching { json.decodeFromString<ToolCall>(payload) }.getOrNull()
     }
 
     fun clearHistory() {
@@ -166,7 +169,7 @@ class ChatViewModel(
     }
 
     companion object {
-        private const val MAX_AGENT_STEPS = 8
+        private const val MAX_AGENT_STEPS = 16
 
         fun factory(app: VasuApp) = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
