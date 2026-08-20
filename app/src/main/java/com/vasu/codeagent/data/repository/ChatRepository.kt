@@ -2,51 +2,134 @@ package com.vasu.codeagent.data.repository
 
 import com.vasu.codeagent.ai.provider.AIClientResult
 import com.vasu.codeagent.ai.provider.AIProviderConfig
+import com.vasu.codeagent.ai.provider.ChatFunctionDefinition
 import com.vasu.codeagent.ai.provider.ChatMessageDto
+import com.vasu.codeagent.ai.provider.ChatToolDefinition
 import com.vasu.codeagent.ai.provider.OpenAICompatibleClient
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 
 class ChatRepository(private val client: OpenAICompatibleClient = OpenAICompatibleClient()) {
     companion object {
         val SYSTEM_PROMPT = """
-You are VASU CODE AGENT, an autonomous coding agent inside an Android app.
+You are VASU CODE AGENT, an autonomous Android coding agent with a real GitHub bridge.
 
-IMPORTANT: this app has a real GitHub tool bridge. You may inspect repositories and files and,
-when the user requests a change, you may write or delete files. The app executes your tool calls
-against GitHub; do not pretend that a change happened unless the tool result confirms it.
+Your job is to complete the user's requested coding task, not merely explain code.
+You have real tools for listing repositories, inspecting files, creating/updating files,
+and deleting files. Tool results are authoritative: never claim an operation succeeded
+unless the tool result says it succeeded.
 
-Available tools are requested by emitting EXACTLY one JSON object and nothing else:
-<tool_call>{"name":"TOOL_NAME","arguments":{...}}</tool_call>
+WORKFLOW:
+1. Identify the target repository. If the user gives a repo URL/name, use it. Otherwise use list_repos.
+2. Inspect the repository before making multi-file changes.
+3. Read every existing file before editing it so you have its current SHA.
+4. Make complete, production-ready file changes using write_file.
+5. After each write, continue inspecting related files and fix inconsistencies.
+6. If a tool returns an error, diagnose the returned error and retry with corrected arguments.
+7. Keep iterating until the requested implementation is complete or a real external limitation prevents it.
+8. Never invent a build/test result. This agent can edit GitHub files but can only know a GitHub Actions
+   result when such a result is actually supplied by an available tool.
+9. Do not expose, request, or repeat secrets, tokens, or API keys.
+10. For write/delete operations, the app may require user approval. Wait for the app's approval rather
+    than pretending the operation happened.
 
-Tools:
-1. list_repos: {} — list repositories accessible to the saved GitHub token.
-2. repo_info: {"repo":"owner/name"} — get repository/default branch information.
-3. list_directory: {"repo":"owner/name","path":"app/src/main/java","branch":"main"} — list a folder.
-4. read_file: {"repo":"owner/name","path":"app/src/main/java/.../File.kt","branch":"main"} — read a text file and its SHA.
-5. write_file: {"repo":"owner/name","path":"...","branch":"main","content":"FULL FILE CONTENT","sha":"CURRENT SHA OR OMIT FOR NEW FILE","commit_message":"..."} — create/replace a file and commit it.
-6. delete_file: {"repo":"owner/name","path":"...","branch":"main","sha":"CURRENT SHA","commit_message":"..."} — delete a file and commit it.
-
-Rules:
-- For an edit, ALWAYS read the current file first and use its returned SHA in write_file. Never overwrite blindly.
-- Inspect the repository structure before making multi-file changes when the task is ambiguous.
-- Prefer minimal, targeted changes and preserve the existing architecture.
-- Read/search operations are safe. Writes and deletes require user approval unless the app's
-  "Auto-approve safe operations" policy explicitly allows the operation.
-- After a write/delete, use the returned tool result as proof of the commit.
-- If a tool fails, analyze the actual returned error and correct it; never invent success.
-- If the user asks to build/test, remember this Android agent currently has GitHub file tools,
-  not a remote shell. You can edit workflow/build files, but cannot claim that a build ran unless
-  a GitHub Actions result is actually provided to you by the app.
-- Never expose or repeat the GitHub token or AI API key.
-- When no tool is needed, answer normally in concise Markdown.
-- When you need a tool, output only the <tool_call> JSON block. After a tool result is supplied,
-  continue the task. Finish with a normal Markdown answer summarizing exactly what was done.
-
-Tool results are supplied as:
-<tool_result name="TOOL_NAME" ok="true|false">...</tool_result>
-
-You are a coding agent, not merely a chat assistant: use the GitHub bridge when it can complete
-the user's requested repository task.
+Use native function/tool calls whenever a tool is needed. Do not emit <tool_call> XML or fake tool syntax.
+When no tool is needed, answer in concise Markdown.
 """.trimIndent()
+
+        private val json = Json { ignoreUnknownKeys = true }
+
+        val TOOLS: List<ChatToolDefinition> = listOf(
+            tool(
+                "list_repos",
+                "List repositories accessible to the connected GitHub account.",
+                emptyParams(),
+            ),
+            tool(
+                "repo_info",
+                "Get repository metadata and its default branch.",
+                objectParams(required = listOf("repo"), properties = mapOf("repo" to "Repository owner/name, for example lknkumar62/Vasu-Voice-Assistant")),
+            ),
+            tool(
+                "list_directory",
+                "List files and directories at a repository path.",
+                objectParams(
+                    required = listOf("repo"),
+                    properties = mapOf(
+                        "repo" to "Repository owner/name",
+                        "path" to "Directory path; use an empty string for repository root",
+                        "branch" to "Branch name; omit when the default branch is desired",
+                    ),
+                ),
+            ),
+            tool(
+                "read_file",
+                "Read a text file from GitHub and return its current blob SHA. Always use this before editing an existing file.",
+                objectParams(
+                    required = listOf("repo", "path"),
+                    properties = mapOf(
+                        "repo" to "Repository owner/name",
+                        "path" to "File path",
+                        "branch" to "Branch name; omit for the default branch",
+                    ),
+                ),
+            ),
+            tool(
+                "write_file",
+                "Create a new file or replace an existing file and commit it to GitHub. For an existing file, sha is required and must be the current SHA returned by read_file.",
+                objectParams(
+                    required = listOf("repo", "path", "content", "commit_message"),
+                    properties = mapOf(
+                        "repo" to "Repository owner/name",
+                        "path" to "File path",
+                        "branch" to "Branch name",
+                        "content" to "Complete UTF-8 file content",
+                        "sha" to "Current blob SHA for an existing file; omit for a new file",
+                        "commit_message" to "Short descriptive commit message",
+                    ),
+                ),
+            ),
+            tool(
+                "delete_file",
+                "Delete an existing repository file and commit the deletion. Requires its current SHA.",
+                objectParams(
+                    required = listOf("repo", "path", "sha", "commit_message"),
+                    properties = mapOf(
+                        "repo" to "Repository owner/name",
+                        "path" to "File path",
+                        "branch" to "Branch name",
+                        "sha" to "Current blob SHA returned by read_file",
+                        "commit_message" to "Short descriptive commit message",
+                    ),
+                ),
+            ),
+        )
+
+        private fun tool(name: String, description: String, parameters: JsonObject) =
+            ChatToolDefinition(function = ChatFunctionDefinition(name, description, parameters))
+
+        private fun emptyParams() = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") {}
+            putJsonObject("required") {}
+        }
+
+        private fun objectParams(required: List<String>, properties: Map<String, String>) = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") {
+                properties.forEach { (key, description) ->
+                    putJsonObject(key) {
+                        put("type", "string")
+                        put("description", description)
+                    }
+                }
+            }
+            put("required", Json.parseToJsonElement(required.joinToString(prefix = "[\"", postfix = "\"]") { it.replace("\"", "\\\"") }))
+            put("additionalProperties", false)
+        }
     }
 
     suspend fun send(
@@ -58,5 +141,6 @@ the user's requested repository task.
         systemPrompt = SYSTEM_PROMPT,
         history = history,
         isNetworkAvailable = isOnline,
+        tools = TOOLS,
     )
 }
