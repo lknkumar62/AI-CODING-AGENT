@@ -55,18 +55,20 @@ class OpenAICompatibleClient {
             maxTokens = config.maxTokens,
             tools = tools.takeIf { it.isNotEmpty() },
             toolChoice = "auto".takeIf { tools.isNotEmpty() },
+            parallelToolCalls = false.takeIf { tools.isNotEmpty() },
         )
 
         return try {
             val response = api.chatCompletions(url, headers, request)
             if (response.isSuccessful) {
-                val message = response.body()?.choices?.firstOrNull()?.message
+                val body = response.body()
+                val message = body?.choices?.firstOrNull()?.message
                 if (message == null) {
                     AIClientResult.ApiError(response.code(), "Provider returned an empty response.")
                 } else {
                     AIClientResult.Success(
                         text = message.content.orEmpty(),
-                        usage = response.body()?.usage,
+                        usage = body.usage,
                         toolCalls = message.toolCalls.orEmpty(),
                     )
                 }
