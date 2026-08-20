@@ -6,8 +6,8 @@ import com.vasu.codeagent.ai.provider.ChatFunctionDefinition
 import com.vasu.codeagent.ai.provider.ChatMessageDto
 import com.vasu.codeagent.ai.provider.ChatToolDefinition
 import com.vasu.codeagent.ai.provider.OpenAICompatibleClient
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -40,49 +40,43 @@ Use native function/tool calls whenever a tool is needed. Do not emit <tool_call
 When no tool is needed, answer in concise Markdown.
 """.trimIndent()
 
-        private val json = Json { ignoreUnknownKeys = true }
-
         val TOOLS: List<ChatToolDefinition> = listOf(
-            tool(
-                "list_repos",
-                "List repositories accessible to the connected GitHub account.",
-                emptyParams(),
-            ),
+            tool("list_repos", "List repositories accessible to the connected GitHub account.", emptyParams()),
             tool(
                 "repo_info",
                 "Get repository metadata and its default branch.",
-                objectParams(required = listOf("repo"), properties = mapOf("repo" to "Repository owner/name, for example lknkumar62/Vasu-Voice-Assistant")),
+                objectParams(listOf("repo"), mapOf("repo" to "Repository owner/name")),
             ),
             tool(
                 "list_directory",
                 "List files and directories at a repository path.",
                 objectParams(
-                    required = listOf("repo"),
-                    properties = mapOf(
+                    listOf("repo"),
+                    mapOf(
                         "repo" to "Repository owner/name",
                         "path" to "Directory path; use an empty string for repository root",
-                        "branch" to "Branch name; omit when the default branch is desired",
+                        "branch" to "Branch name; omit for default branch",
                     ),
                 ),
             ),
             tool(
                 "read_file",
-                "Read a text file from GitHub and return its current blob SHA. Always use this before editing an existing file.",
+                "Read a text file and return its current blob SHA. Always use this before editing an existing file.",
                 objectParams(
-                    required = listOf("repo", "path"),
-                    properties = mapOf(
+                    listOf("repo", "path"),
+                    mapOf(
                         "repo" to "Repository owner/name",
                         "path" to "File path",
-                        "branch" to "Branch name; omit for the default branch",
+                        "branch" to "Branch name; omit for default branch",
                     ),
                 ),
             ),
             tool(
                 "write_file",
-                "Create a new file or replace an existing file and commit it to GitHub. For an existing file, sha is required and must be the current SHA returned by read_file.",
+                "Create a new file or replace an existing file and commit it. Existing files require the current SHA from read_file.",
                 objectParams(
-                    required = listOf("repo", "path", "content", "commit_message"),
-                    properties = mapOf(
+                    listOf("repo", "path", "content", "commit_message"),
+                    mapOf(
                         "repo" to "Repository owner/name",
                         "path" to "File path",
                         "branch" to "Branch name",
@@ -94,10 +88,10 @@ When no tool is needed, answer in concise Markdown.
             ),
             tool(
                 "delete_file",
-                "Delete an existing repository file and commit the deletion. Requires its current SHA.",
+                "Delete an existing file and commit the deletion. Requires its current SHA.",
                 objectParams(
-                    required = listOf("repo", "path", "sha", "commit_message"),
-                    properties = mapOf(
+                    listOf("repo", "path", "sha", "commit_message"),
+                    mapOf(
                         "repo" to "Repository owner/name",
                         "path" to "File path",
                         "branch" to "Branch name",
@@ -114,7 +108,8 @@ When no tool is needed, answer in concise Markdown.
         private fun emptyParams() = buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {}
-            putJsonObject("required") {}
+            put("required", buildJsonArray {})
+            put("additionalProperties", false)
         }
 
         private fun objectParams(required: List<String>, properties: Map<String, String>) = buildJsonObject {
@@ -127,20 +122,17 @@ When no tool is needed, answer in concise Markdown.
                     }
                 }
             }
-            put("required", Json.parseToJsonElement(required.joinToString(prefix = "[\"", postfix = "\"]") { it.replace("\"", "\\\"") }))
+            put("required", buildJsonArray { required.forEach { add(it) } })
             put("additionalProperties", false)
         }
     }
 
-    suspend fun send(
-        config: AIProviderConfig,
-        history: List<ChatMessageDto>,
-        isOnline: Boolean,
-    ): AIClientResult = client.sendChat(
-        config = config,
-        systemPrompt = SYSTEM_PROMPT,
-        history = history,
-        isNetworkAvailable = isOnline,
-        tools = TOOLS,
-    )
+    suspend fun send(config: AIProviderConfig, history: List<ChatMessageDto>, isOnline: Boolean): AIClientResult =
+        client.sendChat(
+            config = config,
+            systemPrompt = SYSTEM_PROMPT,
+            history = history,
+            isNetworkAvailable = isOnline,
+            tools = TOOLS,
+        )
 }
