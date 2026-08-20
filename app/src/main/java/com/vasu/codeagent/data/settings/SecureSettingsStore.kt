@@ -66,8 +66,24 @@ class SecureSettingsStore(context: Context) {
 
     private fun loadProviderConfig(): AIProviderConfig {
         val raw = prefs.getString(KEY_PROVIDER_CONFIG, null) ?: return AIProviderConfig()
-        return runCatching { json.decodeFromString(AIProviderConfig.serializer(), raw) }
-            .getOrDefault(AIProviderConfig())
+        val config = runCatching {
+            json.decodeFromString(AIProviderConfig.serializer(), raw)
+        }.getOrDefault(AIProviderConfig())
+
+        // Migrate the old Qwen3-Coder free slug. OpenRouter currently marks
+        // that free slug as deprecated; using the free router prevents HTTP 404s
+        // while keeping the user's base URL, API key and other settings intact.
+        if (config.baseUrl.trimEnd('/') == "https://openrouter.ai/api/v1" &&
+            config.model == "qwen/qwen3-coder:free"
+        ) {
+            val migrated = config.copy(
+                label = if (config.label.isBlank()) "OpenRouter — free coder" else config.label,
+                model = "openrouter/free",
+            )
+            prefs.edit().putString(KEY_PROVIDER_CONFIG, json.encodeToString(migrated)).apply()
+            return migrated
+        }
+        return config
     }
 
     companion object {
