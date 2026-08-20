@@ -1,7 +1,5 @@
 name: Build debug APK
 
-# Runs on every push to main and can also be triggered manually from the
-# Actions tab (useful when you're building from a phone with no laptop).
 on:
   push:
     branches: [ "main" ]
@@ -20,11 +18,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
+      # Installs Gradle itself and puts it on PATH, so we don't depend on
+      # gradlew/gradle-wrapper.jar being present/correct in the repo.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
