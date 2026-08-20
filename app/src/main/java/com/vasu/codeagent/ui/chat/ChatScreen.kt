@@ -34,10 +34,11 @@ import androidx.compose.ui.unit.dp
 fun ChatScreen(viewModel: ChatViewModel) {
     val messages by viewModel.messages.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
+    val pendingApproval by viewModel.pendingApproval.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages.size, pendingApproval) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
@@ -52,7 +53,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Agent", style = MaterialTheme.typography.labelSmall)
-                TextButton(onClick = viewModel::clearHistory) {
+                TextButton(onClick = viewModel::clearHistory, enabled = !isSending) {
                     Text("Clear")
                 }
             }
@@ -71,10 +72,31 @@ fun ChatScreen(viewModel: ChatViewModel) {
                     else MaterialTheme.colorScheme.surfaceVariant,
                     shape = MaterialTheme.shapes.medium,
                 ) {
-                    if (isUser) {
-                        Text(msg.content, modifier = Modifier.padding(12.dp))
-                    } else {
-                        MarkdownText(msg.content, modifier = Modifier.padding(12.dp))
+                    if (isUser) Text(msg.content, modifier = Modifier.padding(12.dp))
+                    else MarkdownText(msg.content, modifier = Modifier.padding(12.dp))
+                }
+            }
+        }
+
+        if (pendingApproval != null) {
+            val pending = pendingApproval!!
+            Surface(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("GitHub approval required", style = MaterialTheme.typography.titleSmall)
+                    Text("Operation: ${pending.toolName}")
+                    pending.arguments["repo"]?.let { Text("Repository: $it") }
+                    pending.arguments["path"]?.let { Text("File: $it") }
+                    pending.arguments["commit_message"]?.let { Text("Commit: $it") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = viewModel::approvePending) { Text("Approve & Commit") }
+                        TextButton(onClick = viewModel::rejectPending) { Text("Cancel") }
                     }
                 }
             }
@@ -84,7 +106,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (isSending) CircularProgressIndicator()
+            if (isSending && pendingApproval == null) CircularProgressIndicator()
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
@@ -102,9 +124,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 },
                 enabled = !isSending && input.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Send")
-            }
+            ) { Text("Send") }
         }
     }
 }
