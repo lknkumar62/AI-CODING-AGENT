@@ -7,14 +7,14 @@ import com.vasu.codeagent.ai.provider.OpenAICompatibleClient
 
 /**
  * Phase 1 scope: a direct chat round-trip to the configured provider.
- * The tool-calling agent loop (list_files/edit_file/git_*/run_command, with
- * per-tool confirmation) is Phase 3 and plugs into this same client.
+ * The tool-calling agent loop (list_files, edit_file, git status/diff/log, run_command, etc.,
+ * with per-tool confirmation) is Phase 3 and plugs into this same client.
  */
 class ChatRepository(
     private val client: OpenAICompatibleClient = OpenAICompatibleClient(),
 ) {
     companion object {
-        const val SYSTEM_PROMPT = """
+        val SYSTEM_PROMPT = """
 You are VASU CODE AGENT, a professional software engineering agent running on a mobile device.
 Never modify files blindly. Inspect relevant repository structure first, identify the minimum
 files required for a task, and read them before proposing edits. Explain planned changes briefly,
