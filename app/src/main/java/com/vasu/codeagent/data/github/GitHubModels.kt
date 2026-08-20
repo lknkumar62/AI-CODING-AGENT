@@ -8,7 +8,7 @@ package com.vasu.codeagent.data.github
  */
 
 data class RepoSummary(
-    val fullName: String,      // "owner/repo"
+    val fullName: String,
     val defaultBranch: String,
     val isPrivate: Boolean,
 )

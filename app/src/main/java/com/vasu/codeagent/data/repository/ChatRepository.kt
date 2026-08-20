@@ -5,14 +5,7 @@ import com.vasu.codeagent.ai.provider.AIProviderConfig
 import com.vasu.codeagent.ai.provider.ChatMessageDto
 import com.vasu.codeagent.ai.provider.OpenAICompatibleClient
 
-/**
- * Phase 1 scope: a direct chat round-trip to the configured provider.
- * The tool-calling agent loop (list_files, edit_file, git status/diff/log, run_command, etc.,
- * with per-tool confirmation) is Phase 3 and plugs into this same client.
- */
-class ChatRepository(
-    private val client: OpenAICompatibleClient = OpenAICompatibleClient(),
-) {
+class ChatRepository(private val client: OpenAICompatibleClient = OpenAICompatibleClient()) {
     companion object {
         val SYSTEM_PROMPT = """
 You are VASU CODE AGENT, a professional software engineering agent running on a mobile device.
@@ -26,15 +19,6 @@ Keep changes minimal and maintain existing architecture unless asked to redesign
 summarize: what changed, files changed, tests/build performed, and remaining issues.
 """.trim()
     }
-
-    suspend fun send(
-        config: AIProviderConfig,
-        history: List<ChatMessageDto>,
-        isOnline: Boolean,
-    ): AIClientResult = client.sendChat(
-        config = config,
-        systemPrompt = SYSTEM_PROMPT,
-        history = history,
-        isNetworkAvailable = isOnline,
-    )
+    suspend fun send(config: AIProviderConfig, history: List<ChatMessageDto>, isOnline: Boolean): AIClientResult =
+        client.sendChat(config=config, systemPrompt=SYSTEM_PROMPT, history=history, isNetworkAvailable=isOnline)
 }
