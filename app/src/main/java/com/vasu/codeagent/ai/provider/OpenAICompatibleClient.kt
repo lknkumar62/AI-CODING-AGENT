@@ -40,8 +40,12 @@ class OpenAICompatibleClient {
         isNetworkAvailable: Boolean,
         tools: List<ChatToolDefinition> = emptyList(),
     ): AIClientResult {
-        if (!config.isUsable()) return AIClientResult.Offline("No AI provider configured. Add one in Settings.")
-        if (!isNetworkAvailable) return AIClientResult.Offline("Offline — AI provider unavailable")
+        if (!config.isUsable()) {
+            return AIClientResult.Offline("No AI provider configured. Add one in Settings.")
+        }
+        if (!isNetworkAvailable) {
+            return AIClientResult.Offline("Offline — AI provider unavailable")
+        }
 
         val url = buildChatCompletionsUrl(config.baseUrl)
         val headers = buildMap {
@@ -68,7 +72,7 @@ class OpenAICompatibleClient {
                 } else {
                     AIClientResult.Success(
                         text = message.content.orEmpty(),
-                        usage = body.usage,
+                        usage = body?.usage,
                         toolCalls = message.toolCalls.orEmpty(),
                     )
                 }
