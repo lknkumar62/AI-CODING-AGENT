@@ -21,12 +21,12 @@ data class AIProviderConfig(
     fun isUsable(): Boolean = baseUrl.isNotBlank() && model.isNotBlank()
 
     companion object {
-        /** Matches the example in the project brief: a free, fast coding model via OpenRouter. */
+        /** Current OpenRouter free router. It avoids relying on deprecated free model slugs. */
         fun openRouterFreeCoderPreset() = AIProviderConfig(
             label = "OpenRouter — free coder",
             baseUrl = "https://openrouter.ai/api/v1",
             apiKey = "",
-            model = "qwen/qwen3-coder:free",
+            model = "openrouter/free",
             temperature = 0.2,
         )
 
