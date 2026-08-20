@@ -36,6 +36,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     var model by remember(saved) { mutableStateOf(saved.model) }
     var temperature by remember(saved) { mutableStateOf(saved.temperature.toFloat()) }
     var githubToken by remember(savedGithubToken) { mutableStateOf(savedGithubToken) }
+    var status by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -51,10 +52,22 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
-                viewModel.applyPreset(AIProviderConfig.openRouterFreeCoderPreset())
+                val preset = AIProviderConfig.openRouterFreeCoderPreset()
+                label = preset.label
+                baseUrl = preset.baseUrl
+                model = preset.model
+                temperature = preset.temperature.toFloat()
+                viewModel.applyPreset(preset.copy(apiKey = apiKey))
+                status = "✓ OpenRouter free router selected"
             }) { Text("Use free OpenRouter coder") }
             OutlinedButton(onClick = {
-                viewModel.applyPreset(AIProviderConfig.localOllamaPreset())
+                val preset = AIProviderConfig.localOllamaPreset()
+                label = preset.label
+                baseUrl = preset.baseUrl
+                model = preset.model
+                temperature = preset.temperature.toFloat()
+                viewModel.applyPreset(preset)
+                status = "✓ Local Ollama selected"
             }) { Text("Use local Ollama") }
         }
         OutlinedTextField(
@@ -81,7 +94,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             value = model,
             onValueChange = { model = it },
             label = { Text("Model") },
-            placeholder = { Text("qwen/qwen3-coder:free") },
+            placeholder = { Text("openrouter/free") },
             modifier = Modifier.fillMaxWidth()
         )
         Text(
@@ -120,6 +133,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                         temperature = temperature.toDouble()
                     )
                 )
+                status = "✓ AI settings saved"
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Save") }
@@ -137,12 +151,31 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             modifier = Modifier.fillMaxWidth()
         )
         Button(
-            onClick = { viewModel.saveGithubToken(githubToken.trim()) },
+            onClick = {
+                val token = githubToken.trim()
+                if (token.isBlank()) {
+                    status = "⚠ Please enter a GitHub token"
+                } else {
+                    viewModel.saveGithubToken(token)
+                    status = "✓ GitHub token saved securely"
+                }
+            },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Save GitHub token") }
         OutlinedButton(
-            onClick = viewModel::clearAll,
+            onClick = {
+                viewModel.clearAll()
+                githubToken = ""
+                status = "✓ All stored settings cleared"
+            },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Clear all stored settings") }
+
+        if (status.isNotBlank()) {
+            Text(
+                text = status,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }
