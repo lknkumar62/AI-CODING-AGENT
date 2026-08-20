@@ -31,12 +31,14 @@ import com.vasu.codeagent.ai.provider.AIProviderConfig
 fun SettingsScreen(viewModel: SettingsViewModel) {
     val saved by viewModel.providerConfig.collectAsState()
     val autoApprove by viewModel.autoApproveSafeOps.collectAsState()
+    val savedGithubToken by viewModel.githubToken.collectAsState()
 
     var label by remember(saved) { mutableStateOf(saved.label) }
     var baseUrl by remember(saved) { mutableStateOf(saved.baseUrl) }
     var apiKey by remember(saved) { mutableStateOf(saved.apiKey) }
     var model by remember(saved) { mutableStateOf(saved.model) }
     var temperature by remember(saved) { mutableStateOf(saved.temperature.toFloat()) }
+    var githubToken by remember(savedGithubToken) { mutableStateOf(savedGithubToken) }
 
     Column(
         modifier = Modifier
@@ -114,6 +116,26 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Save") }
+
+        Text("GitHub", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "Create a fine-grained personal access token (Settings → Developer settings → " +
+                "Fine-grained tokens on github.com) with Contents read/write on the repos you want " +
+                "VASU to edit. It's stored the same encrypted way as your AI API key, and is never " +
+                "sent to the AI provider or logged.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        OutlinedTextField(
+            value = githubToken,
+            onValueChange = { githubToken = it },
+            label = { Text("GitHub token") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { viewModel.saveGithubToken(githubToken.trim()) },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Save GitHub token") }
 
         OutlinedButton(onClick = { viewModel.clearAll() }, modifier = Modifier.fillMaxWidth()) {
             Text("Clear all stored settings")
