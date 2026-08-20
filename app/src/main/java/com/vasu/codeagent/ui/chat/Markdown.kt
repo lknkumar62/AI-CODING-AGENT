@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -20,10 +21,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 
 /**
- * A small, dependency-free Markdown renderer for chat bubbles: headings,
- * **bold**, *italic*, `inline code`, ``` code blocks ```, and "- "/"1. " lists.
- * Not a full CommonMark implementation — just enough that model output
- * reads like a formatted answer instead of raw asterisks and hashes.
+ * Small dependency-free Markdown renderer for the Agent chat.
+ * Supports headings, bullets, numbered lines, bold, italic, inline code,
+ * and fenced code blocks without adding a Markdown library dependency.
  */
 @Composable
 fun MarkdownText(
@@ -31,25 +31,17 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
 ) {
-    val lines = text.split("\n")
-    var i = 0
+    val blocks = parseMarkdown(text)
 
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        while (i < lines.size) {
-            val line = lines[i]
-            when {
-                line.trim().startsWith("```") -> {
-                    val codeLines = mutableListOf<String>()
-                    i++
-                    while (i < lines.size && !lines[i].trim().startsWith("```")) {
-                        codeLines.add(lines[i])
-                        i++
-                    }
+        blocks.forEach { block ->
+            when (block) {
+                is MarkdownBlock.Code -> {
                     Text(
-                        text = codeLines.joinToString("\n"),
+                        text = block.value,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall,
                         color = color,
@@ -63,99 +55,122 @@ fun MarkdownText(
                     )
                 }
 
-                line.trim().startsWith("### ") ->
+                is MarkdownBlock.Heading -> {
                     Text(
-                        text = inlineStyled(line.trim().removePrefix("### ")),
-                        style = MaterialTheme.typography.titleSmall,
+                        text = inlineStyled(block.value),
+                        style = when (block.level) {
+                            1 -> MaterialTheme.typography.titleLarge
+                            2 -> MaterialTheme.typography.titleMedium
+                            else -> MaterialTheme.typography.titleSmall
+                        },
                         color = color,
                     )
+                }
 
-                line.trim().startsWith("## ") ->
-                    Text(
-                        text = inlineStyled(line.trim().removePrefix("## ")),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = color,
-                    )
-
-                line.trim().startsWith("# ") ->
-                    Text(
-                        text = inlineStyled(line.trim().removePrefix("# ")),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = color,
-                    )
-
-                line.trim().startsWith("- ") || line.trim().startsWith("* ") ->
+                is MarkdownBlock.Bullet -> {
                     Text(
                         text = buildAnnotatedString {
                             append("•  ")
-                            append(
-                                inlineStyled(
-                                    line.trim()
-                                        .removePrefix("- ")
-                                        .removePrefix("* "),
-                                ),
-                            )
+                            append(inlineStyled(block.value))
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = color,
                     )
+                }
 
-                Regex("^\\d+\\.\\s").containsMatchIn(line.trim()) ->
+                is MarkdownBlock.Text -> {
                     Text(
-                        text = inlineStyled(line.trim()),
+                        text = inlineStyled(block.value),
                         style = MaterialTheme.typography.bodyMedium,
                         color = color,
                     )
-
-                line.isBlank() ->
-                    Text("", style = MaterialTheme.typography.bodySmall)
-
-                else ->
-                    Text(
-                        text = inlineStyled(line),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = color,
-                    )
+                }
             }
-            i++
         }
     }
 }
 
-/** Handles **bold**, *italic*, and `inline code` within a single line. */
-private fun inlineStyled(raw: String) = buildAnnotatedString {
-    var idx = 0
-    val pattern = Regex("(\\*\\*.+?\\*\\*|`.+?`|\\*[^*]+?\\*)")
+private sealed interface MarkdownBlock {
+    data class Text(val value: String) : MarkdownBlock
+    data class Heading(val level: Int, val value: String) : MarkdownBlock
+    data class Bullet(val value: String) : MarkdownBlock
+    data class Code(val value: String) : MarkdownBlock
+}
+
+private fun parseMarkdown(input: String): List<MarkdownBlock> {
+    val result = mutableListOf<MarkdownBlock>()
+    val lines = input.replace("\r\n", "\n").split('\n')
+    val codeLines = mutableListOf<String>()
+    var inCode = false
+
+    fun flushCode() {
+        if (codeLines.isNotEmpty()) {
+            result += MarkdownBlock.Code(codeLines.joinToString("\n"))
+            codeLines.clear()
+        }
+    }
+
+    for (rawLine in lines) {
+        val line = rawLine.trimEnd()
+        if (line.trimStart().startsWith("```")) {
+            if (inCode) {
+                flushCode()
+                inCode = false
+            } else {
+                inCode = true
+            }
+            continue
+        }
+
+        if (inCode) {
+            codeLines += line
+            continue
+        }
+
+        val trimmed = line.trim()
+        when {
+            trimmed.isEmpty() -> Unit
+            trimmed.startsWith("### ") -> result += MarkdownBlock.Heading(3, trimmed.removePrefix("### "))
+            trimmed.startsWith("## ") -> result += MarkdownBlock.Heading(2, trimmed.removePrefix("## "))
+            trimmed.startsWith("# ") -> result += MarkdownBlock.Heading(1, trimmed.removePrefix("# "))
+            trimmed.startsWith("- ") -> result += MarkdownBlock.Bullet(trimmed.removePrefix("- "))
+            trimmed.startsWith("* ") -> result += MarkdownBlock.Bullet(trimmed.removePrefix("* "))
+            trimmed.matches(Regex("^\\d+\\.\\s+.*")) -> result += MarkdownBlock.Text(trimmed)
+            else -> result += MarkdownBlock.Text(line)
+        }
+    }
+
+    if (inCode) flushCode()
+    return result
+}
+
+private fun inlineStyled(raw: String): AnnotatedString = buildAnnotatedString {
+    val pattern = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`|\\*[^*]+\\*)")
+    var cursor = 0
 
     for (match in pattern.findAll(raw)) {
-        if (match.range.first > idx) {
-            append(raw.substring(idx, match.range.first))
+        if (match.range.first > cursor) {
+            append(raw.substring(cursor, match.range.first))
         }
 
         val token = match.value
         when {
-            token.startsWith("**") ->
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                    append(token.removePrefix("**").removeSuffix("**"))
-                }
+            token.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                append(token.substring(2, token.length - 2))
+            }
 
-            token.startsWith("`") ->
-                withStyle(
-                    SpanStyle(
-                        fontFamily = FontFamily.Monospace,
-                        background = Color.Black.copy(alpha = 0.15f),
-                    ),
-                ) {
-                    append(token.removePrefix("`").removeSuffix("`"))
-                }
+            token.startsWith("`") -> withStyle(
+                SpanStyle(fontFamily = FontFamily.Monospace),
+            ) {
+                append(token.substring(1, token.length - 1))
+            }
 
-            token.startsWith("*") ->
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                    append(token.removePrefix("*").removeSuffix("*"))
-                }
+            token.startsWith("*") -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                append(token.substring(1, token.length - 1))
+            }
         }
-        idx = match.range.last + 1
+        cursor = match.range.last + 1
     }
 
-    if (idx < raw.length) append(raw.substring(idx))
+    if (cursor < raw.length) append(raw.substring(cursor))
 }
