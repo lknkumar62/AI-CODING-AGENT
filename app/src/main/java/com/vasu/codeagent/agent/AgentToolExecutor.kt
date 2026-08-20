@@ -1,13 +1,14 @@
 package com.vasu.codeagent.agent
 
 import com.vasu.codeagent.data.github.GitHubEntry
+import com.vasu.codeagent.data.github.GitHubOpResult
 import com.vasu.codeagent.data.repository.GitHubRepository
 import com.vasu.codeagent.data.settings.SecureSettingsStore
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
-/** Executes the small, explicit tool surface exposed to the coding model. */
+/** Executes the explicit GitHub tool surface exposed to the coding model. */
 class AgentToolExecutor(
     private val github: GitHubRepository,
     private val settings: SecureSettingsStore,
@@ -20,9 +21,8 @@ class AgentToolExecutor(
 
         if (name == "list_repos") {
             return when (val r = github.listMyRepos(token)) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success ->
-                    Result(true, r.value.joinToString("\n") { "${it.fullName} (branch=${it.defaultBranch}, private=${it.private})" })
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
+                is GitHubOpResult.Success -> Result(true, r.value.joinToString("\n") { "${it.fullName} (branch=${it.defaultBranch}, private=${it.isPrivate})" })
+                is GitHubOpResult.Failure -> Result(false, r.message)
             }
         }
 
@@ -34,39 +34,43 @@ class AgentToolExecutor(
         val namePart = repo.substringAfter('/')
         val branch = arg(args, "branch")?.takeIf { it.isNotBlank() }
             ?: when (val r = github.getRepo(token, owner, namePart)) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> r.value.defaultBranch
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> return Result(false, r.message)
+                is GitHubOpResult.Success -> r.value.defaultBranch
+                is GitHubOpResult.Failure -> return Result(false, r.message)
             }
         settings.saveLastRepo(repo)
 
-        return when (name) {
-            "repo_info" -> when (val r = github.getRepo(token, owner, namePart)) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> Result(true, "repo=${r.value.fullName}\ndefault_branch=${r.value.defaultBranch}\nprivate=${r.value.private}")
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
+        return try {
+            when (name) {
+                "repo_info" -> when (val r = github.getRepo(token, owner, namePart)) {
+                    is GitHubOpResult.Success -> Result(true, "repo=${r.value.fullName}\ndefault_branch=${r.value.defaultBranch}\nprivate=${r.value.isPrivate}")
+                    is GitHubOpResult.Failure -> Result(false, r.message)
+                }
+                "list_directory" -> when (val r = github.listDirectory(token, owner, namePart, arg(args, "path") ?: "", branch)) {
+                    is GitHubOpResult.Success -> Result(true, formatEntries(r.value))
+                    is GitHubOpResult.Failure -> Result(false, r.message)
+                }
+                "read_file" -> when (val r = github.getFile(token, owner, namePart, required(args, "path"), branch)) {
+                    is GitHubOpResult.Success -> Result(true, "FILE: ${r.value.path}\nSHA: ${r.value.sha}\n\n${r.value.text}")
+                    is GitHubOpResult.Failure -> Result(false, r.message)
+                }
+                "write_file" -> when (val r = github.saveFile(
+                    token, owner, namePart, required(args, "path"), branch,
+                    required(args, "commit_message"), required(args, "content"), arg(args, "sha"),
+                )) {
+                    is GitHubOpResult.Success -> Result(true, "Committed ${required(args, "path")} to $repo@$branch. New SHA: ${r.value}")
+                    is GitHubOpResult.Failure -> Result(false, r.message)
+                }
+                "delete_file" -> when (val r = github.deleteFile(
+                    token, owner, namePart, required(args, "path"), branch,
+                    required(args, "commit_message"), required(args, "sha"),
+                )) {
+                    is GitHubOpResult.Success -> Result(true, "Deleted ${required(args, "path")} from $repo@$branch.")
+                    is GitHubOpResult.Failure -> Result(false, r.message)
+                }
+                else -> Result(false, "Unknown tool: $name")
             }
-            "list_directory" -> when (val r = github.listDirectory(token, owner, namePart, arg(args, "path") ?: "", branch)) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> Result(true, formatEntries(r.value))
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
-            }
-            "read_file" -> when (val r = github.getFile(token, owner, namePart, required(args, "path"), branch)) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> Result(true, "FILE: ${r.value.path}\nSHA: ${r.value.sha}\n\n${r.value.text}")
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
-            }
-            "write_file" -> when (val r = github.saveFile(
-                token, owner, namePart, required(args, "path"), branch,
-                required(args, "commit_message"), required(args, "content"), arg(args, "sha"),
-            )) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> Result(true, "Committed ${required(args, "path")} to $repo@$branch. New SHA: ${r.value}")
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
-            }
-            "delete_file" -> when (val r = github.deleteFile(
-                token, owner, namePart, required(args, "path"), branch,
-                required(args, "commit_message"), required(args, "sha"),
-            )) {
-                is com.vasu.codeagent.data.github.GitHubOpResult.Success -> Result(true, "Deleted ${required(args, "path")} from $repo@$branch.")
-                is com.vasu.codeagent.data.github.GitHubOpResult.Failure -> Result(false, r.message)
-            }
-            else -> Result(false, "Unknown tool: $name")
+        } catch (e: IllegalArgumentException) {
+            Result(false, e.message ?: "Invalid tool arguments")
         }
     }
 
@@ -79,7 +83,7 @@ class AgentToolExecutor(
     private fun formatEntries(entries: List<GitHubEntry>): String = entries.joinToString("\n") {
         when (it) {
             is GitHubEntry.Dir -> "DIR  ${it.path}"
-            is GitHubEntry.RegularFile -> "FILE ${it.path}  sha=${it.sha}  size=${it.size}"
+            is GitHubEntry.RegularFile -> "FILE ${it.path}  sha=${it.sha}  size=${it.sizeBytes}"
         }
     }
 }
